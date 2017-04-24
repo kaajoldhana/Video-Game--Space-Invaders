@@ -55,11 +55,81 @@
 #include "Random.h"
 #include "TExaS.h"
 #include "ADC.h"
+#include "Timer0.h"
 
 
 void DisableInterrupts(void); // Disable interrupts
 void EnableInterrupts(void);  // Enable interrupts
 void Delay100ms(uint32_t count); // time delay in 0.1 seconds
+
+//Global
+
+	uint32_t data;
+	int16_t x=52,xb=0,yb=0;
+	int16_t velx=0;
+	uint8_t Dflag=0;
+	uint8_t Lflag=0;
+	
+struct Player{
+	uint16_t xpos, ypos; 
+	uint8_t lives;
+	uint8_t alive; 
+	uint32_t score; 
+	const uint16_t *picture;
+	uint16_t level;
+};
+
+typedef struct Player Player;
+
+struct Enemy{
+	uint16_t xpos[20]; 
+	uint16_t ypos[20]; 
+	
+	uint16_t deadx[20]; 
+	uint16_t deady[20]; 
+	
+	uint16_t alive; 
+	const uint16_t *picture; 
+	
+};
+typedef struct Enemy Enemy; 
+
+
+static Player player;
+static Enemy enemy; 
+
+
+void SysTick_Init(void){
+	NVIC_ST_CTRL_R = 0; //Turn off while setting up
+	NVIC_ST_RELOAD_R = 2000000; // 40 Hz
+	NVIC_ST_CURRENT_R = 0; //clear current to reset 
+	NVIC_SYS_PRI3_R = (NVIC_SYS_PRI3_R & 0x00FFFFFF) | 0x40000000; //Set priority to 2
+	NVIC_ST_CTRL_R = 0x00000007; //Enable systick clock with interrupts
+}
+
+void PortF_Init(void){volatile uint32_t delay;
+// Intialize PortF for hearbeat
+	SYSCTL_RCGCGPIO_R |= 0x20;//F
+	delay = 0x30;
+	GPIO_PORTF_LOCK_R = 0x4C4F434B;
+	GPIO_PORTF_AMSEL_R = 0;
+	GPIO_PORTF_AFSEL_R = 0;
+	GPIO_PORTF_DIR_R &=  ~0x10; //Input for PF1
+	GPIO_PORTF_DIR_R |=  0x02; //Heartbeat for PF1
+	GPIO_PORTF_DEN_R |= 0x12;
+	GPIO_PORTF_CR_R |= 0x14;
+	GPIO_PORTF_PUR_R |= 0x10;
+	
+	GPIO_PORTF_IS_R &= ~0x10;     // (d) PF4 is edge-sensitive
+  GPIO_PORTF_IBE_R &= ~0x10;    //     PF4 is not both edges
+  GPIO_PORTF_IEV_R &= ~0x10;    //     PF4 falling edge event
+  GPIO_PORTF_ICR_R = 0x10;      // (e) clear flag4
+  GPIO_PORTF_IM_R |= 0x10;      // (f) arm interrupt on PF4
+  NVIC_PRI7_R = (NVIC_PRI7_R&0xFF00FFFF)|0x00A00000; // (g) priority 5
+  NVIC_EN0_R = 0x40000000;      // (h) enable interrupt 30 in NVIC
+}
+
+
 
 
 // *************************** Images ***************************
@@ -167,9 +237,7 @@ const unsigned short PlayerShip0[] = {
  0x07E0, 0x07E0, 0x07E0, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
  0x0000, 0x07E0, 0x07E0, 0x07E0, 0x07E0, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
  0x0000, 0x0000, 0x0000, 0x0000, 0x07E0, 0x07E0, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
- 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
-
-
+ 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000
 };
 
 // small shield floating in space to cover the player's ship from enemy fire (undamaged)
@@ -180,35 +248,148 @@ const unsigned short Bunker0[] = {
  0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F,
  0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x0000, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F,
  0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x0000, 0x0000, 0x0000, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F,
- 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x0000, 0x0000,
+ 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x079F, 0x0000, 0x0000
+};
+
+//ramesh = 73x58
+
+
+
+
+
+//Lazer to fire
+//Width = 1. Height = 10
+const unsigned short Lazer[] = {
+ 0x0000, 0x0000, 0xED00, 0xED00, 0xED00, 0xED00, 0xED00, 0x0000, 0x0000, 0x0000,
 
 };
+
+void DrawLazer(void){
+	xb = x+8; //save bullet x coord initial
+	yb = 150; //save bullet y coord initial
+	ST7735_DrawBitmap(xb,yb, Lazer, 1,10); // lazer initial location
+	GPIO_PORTF_DATA_R ^= 0x02;
+	Lflag = 1; //Set flag to signal moving the lazer
+	}
+
+	void MoveLazer(void){
+			if(yb==2){Lflag=0;} //Stop drawing bullet moving
+			yb -= 1; //Move upwards
+			ST7735_DrawBitmap(xb,yb,Lazer,1,10); //Move bullet upwards by 2 pixels per iteration
+	}
+
+
+
+
 
 
 
 // *************************** Capture image dimensions out of BMP**********
+void playerInit(uint16_t level) {
+	
+	uint8_t i =0; 
+	
+	player.xpos =35; //initial position 
+	player.ypos = 9;
+	
+	player.picture = &PlayerShip0[0]; 
+	enemy.picture = SmallEnemy10pointA; 
+	
+	player.alive = 1; 
+	
+	player.level = level; 
+	
+	if(player.level == 1)
+	{
+		enemy.xpos[0] = 10; 
+		
+		for(int i = 1; i<2; i++)
+		{
+			enemy.xpos[i] = enemy.xpos[i-1] + 60; 
+			enemy.ypos[i] = 45;
+			
+			
+			ST7735_DrawBitmap(enemy.xpos[i], enemy.ypos[i], enemy.picture, 16,10);
+			
+			
+		}
+	
+	}
+	
+	if(player.level == 2)
+	{
+		
+		for(int i = 1; i<3; i++)
+		{
+			enemy.xpos[0] = 17;
+			enemy.ypos[0] = 45; 
+			enemy.xpos[i] = enemy.xpos[i-1] + 34;  
+			enemy.ypos[i] = 45; 
+			
+			ST7735_DrawBitmap(enemy.xpos[i], enemy.ypos[i], enemy.picture, 16,10);
 
+	
+}
+		
+	
+	//	enemy.xpos[3] = 2;
+	for(i = 4; i<7; i++)
+	{
+		enemy.xpos[3] = 2;
+			enemy.ypos[3] = 30;
+		enemy.xpos[i] = enemy.xpos[i-1] + 34;  
+		enemy.ypos[i] = 30;
+		
+		ST7735_DrawBitmap(enemy.xpos[i], enemy.ypos[i], enemy.picture, 16,10);
+	}
+	
+//	enemy.xpos[7] = 2; 
+	for(i = 8; i<14; i++)
+	{
+		enemy.xpos[7] = 2;
+			enemy.ypos[7] = 15;
+		enemy.xpos[i] = enemy.xpos[i-1] + 17;  
+		enemy.ypos[i] = 15;
+		ST7735_DrawBitmap(enemy.xpos[i], enemy.ypos[i], enemy.picture, 16,10);
+	}
+
+	ST7735_DrawBitmap(enemy.xpos[7], enemy.ypos[7], enemy.picture, 16,10);
+	ST7735_DrawBitmap(enemy.xpos[3], enemy.ypos[3], enemy.picture, 16,10);
+	ST7735_DrawBitmap(enemy.xpos[0], enemy.ypos[0], enemy.picture, 16,10);
+}
+	}
+	
 int main(void){
   TExaS_Init();  // set system clock to 80 MHz
+	ST7735_InitR(INITR_REDTAB);
   Random_Init(1);
+	ADC_Init();
+	SysTick_Init();
+	ST7735_FillScreen(0x0000);            // set screen to black
+	PortF_Init();
+	EnableInterrupts();           // (i) Enable global Interrupt flag (I)
 
-  Output_Init();
-  ST7735_FillScreen(0x0000);            // set screen to black
-  
-  ST7735_DrawBitmap(52, 159, PlayerShip0, 18,8); // player ship middle bottom
-  ST7735_DrawBitmap(53, 151, Bunker0, 18,5);
-
-  ST7735_DrawBitmap(0, 9, SmallEnemy10pointA, 16,10);
-  ST7735_DrawBitmap(20,9, SmallEnemy10pointB, 16,10);
-  ST7735_DrawBitmap(40, 9, SmallEnemy20pointA, 16,10);
-  ST7735_DrawBitmap(60, 9, SmallEnemy20pointB, 16,10);
-  ST7735_DrawBitmap(80, 9, SmallEnemy30pointA, 16,10);
-  ST7735_DrawBitmap(100, 9, SmallEnemy30pointB, 16,10);
-
-
-  Delay100ms(50);              // delay 5 sec at 80 MHz
+	
+	while(1){
+		
+		ST7735_DrawBitmap(x, 159, PlayerShip0, 18,8); // player ship middle bottom
+		if(Dflag==1){
+			DrawLazer();
+			Dflag=0;
+		}
+		playerInit(2);
+	}
+		
+		
+	
 
 
+
+
+
+}
+
+void GameOver(void){
   ST7735_FillScreen(0x0000);            // set screen to black
   ST7735_SetCursor(1, 1);
   ST7735_OutString("GAME OVER");
@@ -217,14 +398,14 @@ int main(void){
   ST7735_SetCursor(1, 3);
   ST7735_OutString("Earthling!");
   ST7735_SetCursor(2, 4);
-  LCD_OutDec(1234);
-  while(1){
-  }
-
+	while(1){};
 }
 
 
 // You can use this timer only if you learn how it works
+
+
+
 
 void Delay100ms(uint32_t count){uint32_t volatile time;
   while(count>0){
@@ -235,3 +416,33 @@ void Delay100ms(uint32_t count){uint32_t volatile time;
     count--;
   }
 }
+
+
+
+void SysTick_Handler(void){
+	data = ADC_In();
+	if(((data>=2048)&(x>=110))|((data<=2048)&(x<=0))){velx=0;}
+	else{
+		if((data>2457)&(data<3071)){velx = 1;} //Slow right
+		if((data <= 1638)&(data>1023)){velx= -1;} //Slow left
+		if(data<1023){velx = -2;} //Fast left
+		if(data>3071){velx=2;} //Fast Right
+		if((data <= 2457)&(data>1638)){velx= 0;} //Middle 20% = no movement
+	}
+
+	x += velx; //Slide Location
+	
+	
+	
+	}
+
+	
+	
+
+	
+void GPIOPortF_Handler(void){
+  GPIO_PORTF_ICR_R = 0x10;      // acknowledge flag4
+	Dflag = 1; //Set flag to draw initial bullet
+}
+
+

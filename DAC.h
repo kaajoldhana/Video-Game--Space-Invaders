@@ -1,2 +1,12 @@
-// put prototypes for public functions, explain what it does
-// put your names here, date
+
+
+
+
+
+//Initialized DAC with PORTB as output (0-3)
+void DAC_Init(void);
+
+
+//Outputs through PORTB
+void DAC_Out(unsigned char data);
+

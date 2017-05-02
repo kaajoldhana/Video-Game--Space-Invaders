@@ -1,6 +1,6 @@
 ; LCD.s
-; Student names: change this to your names or look very silly
-; Last modification date: change this to the last modification date or look very silly
+; Student names: Abhiroop Kodandapursanjeeva, Kaajol Dhana
+; Last modification date: 3/28
 
 ; Runs on LM4F120/TM4C123
 ; Use SSI0 to send an 8-bit code to the ST7735 160x128 pixel LCD.
@@ -19,7 +19,9 @@
 ; VCC (pin 2) connected to +3.3 V
 ; Gnd (pin 1) connected to ground
 
-GPIO_PORTA_DATA_R       EQU   0x400043FC
+DC                      EQU   0x40004100
+DC_COMMAND              EQU   0
+DC_DATA                 EQU   0x40
 SSI0_DR_R               EQU   0x40008008
 SSI0_SR_R               EQU   0x4000800C
 SSI_SR_RNE              EQU   0x00000004  ; SSI Receive FIFO Not Empty
@@ -56,13 +58,37 @@ SSI_SR_TNF              EQU   0x00000002  ; SSI Transmit FIFO Not Full
 ; Output: none
 ; Assumes: SSI0 and port A have already been initialized and enabled
 writecommand
+;; --UUU-- Code to write a command to the LCD
 ;1) Read SSI0_SR_R and check bit 4, 
 ;2) If bit 4 is high, loop back to step 1 (wait for BUSY bit to be low)
 ;3) Clear D/C=PA6 to zero
 ;4) Write the command to SSI0_DR_R
 ;5) Read SSI0_SR_R and check bit 4, 
 ;6) If bit 4 is high, loop back to step 5 (wait for BUSY bit to be low)
-
+	LDR R1,=SSI0_SR_R;
+	LDR R1,[R1];
+	AND R1,R1,#0x10;
+	CMP R1, #0;
+	BNE writecommand;
+	
+	; Clear PA6
+	LDR R2,=DC;
+	LDR R3,[R2];
+	BIC R3,#0x40;
+	STR R3,[R2];
+	
+	;Write R0 input command to SSI0 
+	LDR R2,=SSI0_DR_R;
+	STR R0,[R2];
+	
+	
+;Wait for low bit 4 	
+Step5
+	LDR R2,=SSI0_SR_R;
+	LDR R2,[R2];
+	AND R2,#0x10;
+	CMP R2, #0x10;
+	BEQ Step5;
     
     
     BX  LR                          ;   return
@@ -72,11 +98,30 @@ writecommand
 ; Output: none
 ; Assumes: SSI0 and port A have already been initialized and enabled
 writedata
+;; --UUU-- Code to write data to the LCD
 ;1) Read SSI0_SR_R and check bit 1, 
 ;2) If bit 1 is low loop back to step 1 (wait for TNF bit to be high)
 ;3) Set D/C=PA6 to one
 ;4) Write the 8-bit data to SSI0_DR_R
 
+;busy wait
+Step1
+	LDR R2,=SSI0_SR_R;
+	LDR R2,[R2];
+	AND R2,#0x02;
+	CMP R2, #0x00;
+	BEQ Step1;
+	
+	LDR R2,=DC;
+	LDR R3,[R2];
+	ORR R3,#0x40; set bit 6 to 1
+	STR R3,[R2];
+	
+	;write data 
+	LDR R2,=SSI0_DR_R;
+	STR R0,[R2];
+	
+	
     
     
     BX  LR                          ;   return
